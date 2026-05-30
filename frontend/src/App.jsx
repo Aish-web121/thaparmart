@@ -26,6 +26,58 @@ const STATUS_META = {
   ARCHIVED:       { label: "Archived",     color: "#64748b", bg: "rgba(100,116,139,0.12)"},
 };
 
+// ─── CHANGE 1: STOMP / SockJS singleton ──────────────────────────────────────
+// Requires in index.html:
+//   <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+//   <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
+
+let _stompClient = null;
+let _stompReady = false;
+const _stompListeners = new Map(); // destination → Set<callback>
+
+function initStomp() {
+  if (_stompClient) return;
+  const token = localStorage.getItem("jwt");
+  if (!token || !window.StompJs || !window.SockJS) return;
+
+  const client = new window.StompJs.Client({
+    webSocketFactory: () => new window.SockJS(WS_URL + "/ws"),
+    connectHeaders: { Authorization: `Bearer ${token}` },
+    reconnectDelay: 5000,
+    onConnect: () => {
+      _stompReady = true;
+      _stompListeners.forEach((cbs, dest) => {
+        client.subscribe(dest, (frame) => {
+          try {
+            const data = JSON.parse(frame.body);
+            cbs.forEach(cb => cb(data));
+          } catch {}
+        });
+      });
+    },
+    onDisconnect: () => { _stompReady = false; },
+  });
+
+  client.activate();
+  _stompClient = client;
+}
+
+function stompSubscribe(destination, callback) {
+  if (!_stompListeners.has(destination)) _stompListeners.set(destination, new Set());
+  _stompListeners.get(destination).add(callback);
+
+  if (_stompReady && _stompClient) {
+    const sub = _stompClient.subscribe(destination, (frame) => {
+      try { callback(JSON.parse(frame.body)); } catch {}
+    });
+    return () => {
+      sub.unsubscribe();
+      _stompListeners.get(destination)?.delete(callback);
+    };
+  }
+  return () => { _stompListeners.get(destination)?.delete(callback); };
+}
+
 // ─── Auth Helpers ─────────────────────────────────────────────────────────────
 
 function getToken()  { return localStorage.getItem("jwt"); }
@@ -117,17 +169,29 @@ const css = `
     --radius-sm: 8px;
     --shadow:   0 4px 24px rgba(0,0,0,0.5);
     --glow:     0 0 30px rgba(91,127,255,0.15);
+    --nav-h:    58px;
+    --bottom-nav-h: 0px;
   }
 
-  html, body, #root { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-body); }
+  @media (max-width: 640px) {
+    :root { --bottom-nav-h: 60px; }
+  }
 
-  ::-webkit-scrollbar { width: 6px; }
+  html, body, #root {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: var(--surface); }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
 
   input, select, textarea {
     font-family: var(--font-body);
-    font-size: 14px;
+    font-size: 16px; /* prevents iOS zoom */
     width: 100%;
     padding: 11px 14px;
     background: var(--surface);
@@ -136,14 +200,193 @@ const css = `
     border-radius: var(--radius-sm);
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
+    -webkit-appearance: none;
+    appearance: none;
   }
   input:focus, select:focus, textarea:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(91,127,255,0.12);
   }
   select option { background: var(--surface); }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7280' d='M1 1l5 5 5-5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
 
   button { cursor: pointer; font-family: var(--font-body); }
+
+  /* ── Responsive grid ── */
+  .product-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .product-grid {
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+  }
+  @media (max-width: 400px) {
+    .product-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ── Top nav (desktop) ── */
+  .top-nav { display: flex; }
+  .bottom-nav { display: none; }
+
+  @media (max-width: 640px) {
+    .top-nav-links { display: none !important; }
+    .top-nav-user-name { display: none !important; }
+    .bottom-nav {
+      display: flex;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: var(--bottom-nav-h);
+      background: rgba(8,9,12,0.95);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid var(--border);
+      z-index: 200;
+      align-items: stretch;
+    }
+  }
+
+  /* ── Main padding ── */
+  .main-content {
+    padding: 24px 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding-bottom: calc(24px + var(--bottom-nav-h));
+  }
+  @media (max-width: 640px) {
+    .main-content { padding: 14px 12px; padding-bottom: calc(14px + var(--bottom-nav-h)); }
+  }
+
+  /* ── Filter bar ── */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .filter-bar .search-row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+  .filter-bar .filter-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  @media (max-width: 640px) {
+    .filter-bar .filter-row select { width: 100%; flex: 1 1 100%; }
+    .filter-bar .filter-row .price-inputs { display: flex; gap: 8px; flex: 1 1 100%; }
+    .filter-bar .filter-row .price-inputs input { flex: 1; }
+  }
+
+  /* ── Modal ── */
+  .modal-inner {
+    background: var(--card);
+    border-radius: 18px;
+    border: 1px solid var(--border2);
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+    animation: fadeUp 0.25s ease;
+  }
+  @media (max-width: 640px) {
+    .modal-backdrop {
+      align-items: flex-end !important;
+      padding: 0 !important;
+    }
+    .modal-inner {
+      border-bottom-left-radius: 0;
+      border-bottom-right-radius: 0;
+      max-height: 92vh;
+      border-bottom: none;
+    }
+  }
+
+  /* ── Inbox split pane ── */
+  .inbox-pane { display: flex; min-height: 420px; }
+  .inbox-sidebar { width: 280px; border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
+  .inbox-thread  { flex: 1; min-width: 0; }
+  @media (max-width: 640px) {
+    .inbox-pane { flex-direction: column; }
+    .inbox-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); max-height: 220px; }
+    .inbox-thread  { min-height: 360px; }
+  }
+
+  /* ── Admin tabs ── */
+  .admin-tabs {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .admin-tabs::-webkit-scrollbar { display: none; }
+  .admin-tabs button { flex-shrink: 0; }
+
+  /* ── Card actions wrap ── */
+  .card-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Form grid ── */
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 480px) {
+    .form-grid-2 { grid-template-columns: 1fr; }
+  }
+
+  /* ── Auth card ── */
+  .auth-card {
+    background: var(--card);
+    border-radius: 20px;
+    border: 1px solid var(--border2);
+    padding: 28px;
+    box-shadow: var(--shadow), var(--glow);
+  }
+  @media (max-width: 480px) {
+    .auth-card { padding: 20px 16px; border-radius: 16px; }
+  }
+
+  /* ── Pending admin row ── */
+  .pending-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .pending-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 640px) {
+    .pending-row { flex-direction: column; }
+    .pending-actions { flex-direction: row; flex-wrap: wrap; }
+  }
+
+  /* ── User row ── */
+  .user-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+  }
+  @media (max-width: 480px) {
+    .user-row { flex-wrap: wrap; }
+    .user-row .user-actions { margin-left: auto; }
+  }
 
   @keyframes fadeUp {
     from { opacity:0; transform:translateY(14px); }
@@ -154,6 +397,10 @@ const css = `
   @keyframes slideIn {
     from { opacity:0; transform:translateX(16px); }
     to   { opacity:1; transform:translateX(0); }
+  }
+  @keyframes slideUp {
+    from { opacity:0; transform:translateY(20px); }
+    to   { opacity:1; transform:translateY(0); }
   }
 `;
 
@@ -180,12 +427,12 @@ function Toast({ msg, type, onClose }) {
   const colors = { success: "#10b981", error: "#ef4444", info: "#5b7fff" };
   return (
     <div style={{
-      position: "fixed", bottom: 24, right: 24, zIndex: 9999,
+      position: "fixed", bottom: "calc(var(--bottom-nav-h) + 12px)", right: 16, zIndex: 9999,
       background: "var(--card)", border: `1px solid ${colors[type] || colors.info}`,
-      color: "var(--text)", padding: "12px 18px", borderRadius: "var(--radius)",
+      color: "var(--text)", padding: "12px 16px", borderRadius: "var(--radius)",
       boxShadow: "0 8px 30px rgba(0,0,0,0.5)",
       animation: "slideIn 0.3s ease",
-      display: "flex", alignItems: "center", gap: 10, maxWidth: 340,
+      display: "flex", alignItems: "center", gap: 10, maxWidth: "min(340px, calc(100vw - 32px))",
       fontSize: 14,
     }}>
       <span style={{ color: colors[type] || colors.info, fontSize: 18 }}>
@@ -206,13 +453,13 @@ function Btn({ children, variant = "primary", size = "md", loading, icon, style:
     subtle:   { background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)" },
   };
   const sizes = {
-    sm: { padding: "6px 12px", fontSize: 12, borderRadius: 8 },
+    sm: { padding: "6px 11px", fontSize: 12, borderRadius: 8 },
     md: { padding: "9px 16px", fontSize: 14, borderRadius: 10 },
     lg: { padding: "12px 22px", fontSize: 15, borderRadius: 12, fontWeight: 600 },
   };
   return (
     <button disabled={loading || props.disabled} style={{
-      display: "inline-flex", alignItems: "center", gap: 7,
+      display: "inline-flex", alignItems: "center", gap: 6,
       fontWeight: 500, whiteSpace: "nowrap", transition: "all 0.18s",
       opacity: (loading || props.disabled) ? 0.6 : 1,
       ...variants[variant], ...sizes[size], ...sx,
@@ -230,6 +477,7 @@ function Badge({ children, color = "var(--muted)" }) {
       padding: "3px 9px", borderRadius: 99,
       fontSize: 11, fontWeight: 600, letterSpacing: "0.04em",
       background: color + "22", color,
+      whiteSpace: "nowrap",
     }}>
       {children}
     </span>
@@ -237,22 +485,26 @@ function Badge({ children, color = "var(--muted)" }) {
 }
 
 function Modal({ title, children, onClose, width = 480 }) {
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
   return (
-    <div onClick={e => e.target === e.currentTarget && onClose()} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-    }}>
-      <div style={{
-        background: "var(--card)", borderRadius: 18, border: "1px solid var(--border2)",
-        width: "100%", maxWidth: width, maxHeight: "90vh", overflowY: "auto",
-        boxShadow: "0 24px 80px rgba(0,0,0,0.7)",
-        animation: "fadeUp 0.25s ease",
-      }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding: "20px 24px", borderBottom: "1px solid var(--border)" }}>
-          <h3 style={{ fontFamily:"var(--font-head)", fontSize:17, fontWeight:700 }}>{title}</h3>
-          <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--muted)", fontSize:22, lineHeight:1, padding:4 }}>×</button>
+    <div
+      className="modal-backdrop"
+      onClick={e => e.target === e.currentTarget && onClose()}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 1000,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+    >
+      <div className="modal-inner" style={{ maxWidth: width }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding: "18px 20px", borderBottom: "1px solid var(--border)" }}>
+          <h3 style={{ fontFamily:"var(--font-head)", fontSize:16, fontWeight:700 }}>{title}</h3>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"var(--muted)", fontSize:24, lineHeight:1, padding:"2px 6px" }}>×</button>
         </div>
-        <div style={{ padding: "20px 24px" }}>{children}</div>
+        <div style={{ padding: "18px 20px" }}>{children}</div>
       </div>
     </div>
   );
@@ -310,25 +562,23 @@ function AuthPage({ onAuth }) {
       minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
       background:"var(--bg)",
       backgroundImage:"radial-gradient(ellipse 60% 50% at 50% 0%, rgba(91,127,255,0.08) 0%, transparent 70%)",
+      padding: "16px",
     }}>
       <div style={{ width:"100%", maxWidth:420, animation:"fadeUp 0.4s ease" }}>
-        <div style={{ textAlign:"center", marginBottom:32 }}>
+        <div style={{ textAlign:"center", marginBottom:28 }}>
           <div style={{
             display:"inline-flex", alignItems:"center", justifyContent:"center",
-            width:56, height:56, borderRadius:16, marginBottom:14,
+            width:52, height:52, borderRadius:14, marginBottom:12,
             background:"linear-gradient(135deg, var(--accent), var(--accent2))",
             boxShadow:"0 8px 24px rgba(91,127,255,0.35)",
-            fontSize:26,
+            fontSize:24,
           }}>🏛️</div>
-          <h1 style={{ fontFamily:"var(--font-head)", fontSize:28, fontWeight:800, letterSpacing:"-0.02em" }}>ThaparMart</h1>
-          <p style={{ color:"var(--muted)", fontSize:14, marginTop:4 }}>Campus marketplace for Thapar students</p>
+          <h1 style={{ fontFamily:"var(--font-head)", fontSize:26, fontWeight:800, letterSpacing:"-0.02em" }}>ThaparMart</h1>
+          <p style={{ color:"var(--muted)", fontSize:13, marginTop:4 }}>Campus marketplace for Thapar students</p>
         </div>
 
-        <div style={{
-          background:"var(--card)", borderRadius:20, border:"1px solid var(--border2)",
-          padding:28, boxShadow:"var(--shadow), var(--glow)",
-        }}>
-          <div style={{ display:"flex", background:"var(--surface)", borderRadius:10, padding:3, marginBottom:22, gap:3 }}>
+        <div className="auth-card">
+          <div style={{ display:"flex", background:"var(--surface)", borderRadius:10, padding:3, marginBottom:20, gap:3 }}>
             {["login","register"].map(t => (
               <button key={t} onClick={() => { setTab(t); setErr(""); }} style={{
                 flex:1, padding:"8px 0", borderRadius:8, border:"none",
@@ -355,7 +605,7 @@ function AuthPage({ onAuth }) {
                     <option value="SELLER">Seller — I want to sell items</option>
                   </select>
                 </FieldGroup>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                <div className="form-grid-2">
                   <FieldGroup label="Hostel">
                     <input placeholder="e.g. A Block" value={form.hostelName} onChange={set("hostelName")} />
                   </FieldGroup>
@@ -409,53 +659,55 @@ function ProductCard({ product, onChat, onReport, onMarkSold, onArchive, onRelis
     onMouseLeave={e => { e.currentTarget.style.transform=""; e.currentTarget.style.boxShadow=""; }}
     >
       <div style={{
-        height:160, position:"relative", overflow:"hidden",
+        height:140, position:"relative", overflow:"hidden",
         background: `linear-gradient(135deg, ${cat.color}18, ${cat.color}06)`,
         display:"flex", alignItems:"center", justifyContent:"center",
       }}>
         {product.imageUrl
           ? <img src={product.imageUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
-          : <span style={{ fontSize:52, opacity:0.85 }}>{cat.icon}</span>
+          : <span style={{ fontSize:46, opacity:0.85 }}>{cat.icon}</span>
         }
-        <div style={{ position:"absolute", top:10, left:10 }}>
+        <div style={{ position:"absolute", top:8, left:8 }}>
           <Badge color={cat.color}>{product.category}</Badge>
         </div>
         {product.status !== "AVAILABLE" && (
-          <div style={{ position:"absolute", top:10, right:10 }}>
+          <div style={{ position:"absolute", top:8, right:8 }}>
             <Badge color={status.color}>{status.label}</Badge>
           </div>
         )}
       </div>
 
-      <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap:8, flex:1 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-          <h3 style={{ fontFamily:"var(--font-head)", fontWeight:700, fontSize:15, lineHeight:1.3 }}>{product.title}</h3>
-          <span style={{ fontFamily:"var(--font-head)", fontWeight:800, fontSize:17, color:"var(--accent)", whiteSpace:"nowrap" }}>₹{product.price}</span>
+      <div style={{ padding:"12px 14px", display:"flex", flexDirection:"column", gap:7, flex:1 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:6 }}>
+          <h3 style={{ fontFamily:"var(--font-head)", fontWeight:700, fontSize:14, lineHeight:1.3, flex:1 }}>{product.title}</h3>
+          <span style={{ fontFamily:"var(--font-head)", fontWeight:800, fontSize:15, color:"var(--accent)", whiteSpace:"nowrap" }}>₹{product.price}</span>
         </div>
 
-        <p style={{ color:"var(--muted)", fontSize:13, lineHeight:1.5, flex:1 }}>{product.description}</p>
+        <p style={{ color:"var(--muted)", fontSize:12, lineHeight:1.5, flex:1,
+          display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden"
+        }}>{product.description}</p>
 
         {product.meetingHostel && (
-          <div style={{ display:"flex", alignItems:"center", gap:5, color:"var(--muted)", fontSize:12 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:4, color:"var(--muted)", fontSize:11 }}>
             <span>📍</span>
-            <span>{product.meetingHostel}{product.meetingRoom ? ` · Room ${product.meetingRoom}` : ""}</span>
+            <span>{product.meetingHostel}{product.meetingRoom ? ` · ${product.meetingRoom}` : ""}</span>
           </div>
         )}
 
         {product.sellerName && (
-          <div style={{ display:"flex", alignItems:"center", gap:5, color:"var(--muted)", fontSize:12 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:4, color:"var(--muted)", fontSize:11 }}>
             <span>👤</span><span>{product.sellerName}</span>
           </div>
         )}
 
         {product.status === "REJECTED" && product.rejectionReason && (
-          <div style={{ background:"rgba(239,68,68,0.08)", color:"#ef4444", padding:"8px 10px", borderRadius:8, fontSize:12, border:"1px solid rgba(239,68,68,0.15)" }}>
+          <div style={{ background:"rgba(239,68,68,0.08)", color:"#ef4444", padding:"6px 8px", borderRadius:7, fontSize:11, border:"1px solid rgba(239,68,68,0.15)" }}>
             <strong>Rejected:</strong> {product.rejectionReason}
           </div>
         )}
 
         {showActions && product.status === "AVAILABLE" && (
-          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
+          <div className="card-actions" style={{ marginTop:4 }}>
             {!isMine && (
               <>
                 <Btn size="sm" icon="💬" onClick={() => onChat?.(product)}>Chat</Btn>
@@ -464,32 +716,32 @@ function ProductCard({ product, onChat, onReport, onMarkSold, onArchive, onRelis
             )}
             {isMine && (
               <>
-                <Btn size="sm" variant="success" onClick={() => onMarkSold?.(product.id)}>Mark Sold</Btn>
+                <Btn size="sm" variant="success" onClick={() => onMarkSold?.(product.id)}>Sold</Btn>
                 <Btn size="sm" variant="ghost" onClick={() => onArchive?.(product.id)}>Archive</Btn>
                 <Btn size="sm" variant="subtle" icon="✏️" onClick={() => onEdit?.(product)}>Edit</Btn>
-                <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Delete</Btn>
+                <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Del</Btn>
               </>
             )}
           </div>
         )}
 
         {showActions && isMine && product.status === "ARCHIVED" && (
-          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
+          <div className="card-actions" style={{ marginTop:4 }}>
             <Btn size="sm" variant="success" onClick={() => onRelist?.(product.id)}>↩ Relist</Btn>
             <Btn size="sm" variant="subtle" icon="✏️" onClick={() => onEdit?.(product)}>Edit</Btn>
-            <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Delete</Btn>
+            <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Del</Btn>
           </div>
         )}
 
         {showActions && isMine && product.status === "REJECTED" && (
-          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
+          <div className="card-actions" style={{ marginTop:4 }}>
             <Btn size="sm" variant="subtle" icon="✏️" onClick={() => onEdit?.(product)}>Edit & Resubmit</Btn>
-            <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Delete</Btn>
+            <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Del</Btn>
           </div>
         )}
 
         {showActions && isMine && product.status === "SOLD" && (
-          <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
+          <div className="card-actions" style={{ marginTop:4 }}>
             <Btn size="sm" variant="danger" onClick={() => onDelete?.(product.id)}>Delete</Btn>
           </div>
         )}
@@ -500,13 +752,17 @@ function ProductCard({ product, onChat, onReport, onMarkSold, onArchive, onRelis
 
 // ─── Chat Modal ───────────────────────────────────────────────────────────────
 
+// ─── CHANGE 2: ChatModal — added STOMP subscription + polling fallback + status dot ───
+
 function ChatModal({ product, onClose, toast }) {
   const user = getUser();
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [wsStatus, setWsStatus] = useState("connecting"); // "connecting" | "live" | "polling"
   const bottomRef = useRef(null);
+  const pollRef = useRef(null);
 
   const otherUserId = user?.id === product.sellerId ? null : product.sellerId;
 
@@ -519,7 +775,38 @@ function ChatModal({ product, onClose, toast }) {
     setLoading(false);
   }, [product.id, otherUserId]);
 
-  useEffect(() => { loadMessages(); }, [loadMessages]);
+  useEffect(() => {
+    loadMessages();
+
+    if (!user?.id) return;
+
+    const destination = `/topic/messages/${user.id}`;
+    const unsub = stompSubscribe(destination, (msg) => {
+      if (msg.productId === product.id) {
+        setMessages(prev => {
+          if (prev.find(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+        setWsStatus("live");
+      }
+    });
+
+    const check = setTimeout(() => {
+      if (!_stompReady) {
+        setWsStatus("polling");
+        pollRef.current = setInterval(loadMessages, 4000);
+      } else {
+        setWsStatus("live");
+      }
+    }, 3000);
+
+    return () => {
+      unsub();
+      clearTimeout(check);
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [loadMessages, product.id, user?.id]);
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
 
   async function send() {
@@ -537,10 +824,21 @@ function ChatModal({ product, onClose, toast }) {
   }
 
   return (
-    <Modal title={`Chat — ${product.title}`} onClose={onClose} width={520}>
+    <Modal title={`💬 ${product.title}`} onClose={onClose} width={520}>
+      {/* WS status indicator */}
+      <div style={{ marginBottom:8, display:"flex", alignItems:"center", gap:6 }}>
+        <span style={{
+          width:7, height:7, borderRadius:"50%", display:"inline-block",
+          background: wsStatus==="live" ? "var(--success)" : wsStatus==="polling" ? "var(--warn)" : "var(--muted)",
+          boxShadow: wsStatus==="live" ? "0 0 6px var(--success)" : "none",
+        }} />
+        <span style={{ fontSize:11, color:"var(--muted)" }}>
+          {wsStatus==="live" ? "Live" : wsStatus==="polling" ? "Polling every 4s" : "Connecting…"}
+        </span>
+      </div>
       <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
         <div style={{
-          height:340, overflowY:"auto", padding:"4px 0",
+          height:320, overflowY:"auto", padding:"4px 0",
           display:"flex", flexDirection:"column", gap:8,
         }}>
           {loading && <div style={{ textAlign:"center", padding:40 }}><Spinner /></div>}
@@ -554,14 +852,14 @@ function ChatModal({ product, onClose, toast }) {
             return (
               <div key={m.id} style={{ display:"flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
                 <div style={{
-                  maxWidth:"75%", padding:"9px 13px", borderRadius:12,
+                  maxWidth:"78%", padding:"9px 13px", borderRadius:12,
                   background: mine ? "var(--accent)" : "var(--surface)",
                   color: mine ? "#fff" : "var(--text)",
                   fontSize:13, lineHeight:1.5,
                   borderBottomRightRadius: mine ? 4 : 12,
                   borderBottomLeftRadius: mine ? 12 : 4,
                 }}>
-                  {!mine && <div style={{ fontSize:11, color: mine ? "rgba(255,255,255,0.7)" : "var(--muted)", marginBottom:3 }}>{m.senderName}</div>}
+                  {!mine && <div style={{ fontSize:11, color:"var(--muted)", marginBottom:3 }}>{m.senderName}</div>}
                   {m.content}
                   <div style={{ fontSize:10, opacity:0.6, marginTop:4, textAlign:"right" }}>
                     {new Date(m.sentAt).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}
@@ -669,13 +967,13 @@ function ImageUploader({ value, onChange, toast }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
       {value && (
-        <div style={{ position:"relative", borderRadius:10, overflow:"hidden", height:140, background:"var(--surface)" }}>
+        <div style={{ position:"relative", borderRadius:10, overflow:"hidden", height:130, background:"var(--surface)" }}>
           <img src={value} alt="preview" style={{ width:"100%", height:"100%", objectFit:"cover" }}
             onError={e => e.target.style.display="none"} />
           <button onClick={() => onChange("")} style={{
             position:"absolute", top:6, right:6,
             background:"rgba(0,0,0,0.6)", border:"none", color:"#fff",
-            borderRadius:"50%", width:24, height:24, cursor:"pointer", fontSize:14, lineHeight:1,
+            borderRadius:"50%", width:26, height:26, cursor:"pointer", fontSize:16, lineHeight:1,
           }}>×</button>
         </div>
       )}
@@ -686,13 +984,13 @@ function ImageUploader({ value, onChange, toast }) {
       <div style={{ display:"flex", gap:8 }}>
         <Btn type="button" variant="ghost" loading={uploading} icon="📷"
           onClick={() => inputRef.current?.click()} style={{ flex:1, justifyContent:"center" }}>
-          {uploading ? "Uploading…" : value ? "Change Image" : "Upload Image (JPG/PNG)"}
+          {uploading ? "Uploading…" : value ? "Change Image" : "Upload Image"}
         </Btn>
         {value && (
           <Btn type="button" variant="subtle" size="sm" onClick={() => onChange("")}>Remove</Btn>
         )}
       </div>
-      <p style={{ fontSize:11, color:"var(--muted)" }}>Max 5MB · JPG, PNG, WEBP supported</p>
+      <p style={{ fontSize:11, color:"var(--muted)" }}>Max 5MB · JPG, PNG, WEBP</p>
     </div>
   );
 }
@@ -728,18 +1026,16 @@ function EditModal({ product, onClose, onSaved, toast }) {
           <textarea rows={3} value={form.description} onChange={set("description")} style={{ resize:"vertical" }} />
         </FieldGroup>
         <FieldGroup label="Image">
-          <ImageUploader
-            value={form.imageUrl}
-            onChange={url => setForm(p => ({ ...p, imageUrl: url }))}
-            toast={toast}
-          />
+          <ImageUploader value={form.imageUrl} onChange={url => setForm(p => ({ ...p, imageUrl: url }))} toast={toast} />
         </FieldGroup>
-        <FieldGroup label="Price (₹)"><input type="number" min="0" value={form.price} onChange={set("price")} /></FieldGroup>
-        <FieldGroup label="Category">
-          <select value={form.category} onChange={set("category")}>
-            {CATEGORIES.map(c => <option key={c} value={c}>{CAT_META[c].icon} {c}</option>)}
-          </select>
-        </FieldGroup>
+        <div className="form-grid-2">
+          <FieldGroup label="Price (₹)"><input type="number" min="0" value={form.price} onChange={set("price")} /></FieldGroup>
+          <FieldGroup label="Category">
+            <select value={form.category} onChange={set("category")}>
+              {CATEGORIES.map(c => <option key={c} value={c}>{CAT_META[c].icon} {c}</option>)}
+            </select>
+          </FieldGroup>
+        </div>
         <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
           <Btn loading={loading} onClick={save}>Save Changes</Btn>
@@ -780,65 +1076,53 @@ function Marketplace({ toast }) {
   useEffect(() => { load(); }, []);
 
   async function markSold(id) {
-    try {
-      await apiFetch(`/products/${id}/status?status=SOLD`, { method:"PATCH" });
-      toast("Marked as sold!", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}/status?status=SOLD`, { method:"PATCH" }); toast("Marked as sold!", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
-
   async function archiveProduct(id) {
-    try {
-      await apiFetch(`/products/${id}/status?status=ARCHIVED`, { method:"PATCH" });
-      toast("Listing archived", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}/status?status=ARCHIVED`, { method:"PATCH" }); toast("Listing archived", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
-
   async function relistProduct(id) {
-    try {
-      await apiFetch(`/products/${id}/status?status=PENDING_REVIEW`, { method:"PATCH" });
-      toast("Listing resubmitted for review!", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}/status?status=PENDING_REVIEW`, { method:"PATCH" }); toast("Listing resubmitted for review!", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
-
   async function deleteProduct(id) {
     if (!confirm("Delete this listing?")) return;
-    try {
-      await apiFetch(`/products/${id}`, { method:"DELETE" });
-      toast("Listing deleted", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}`, { method:"DELETE" }); toast("Listing deleted", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <div style={{
         background:"var(--card)", borderRadius:"var(--radius)", border:"1px solid var(--border)",
-        padding:"16px 20px", display:"flex", flexDirection:"column", gap:12,
+        padding:"14px 16px",
       }}>
-        <div style={{ display:"flex", gap:10 }}>
-          <input
-            placeholder="Search listings…" value={search}
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.key==="Enter" && load()}
-            style={{ flex:1 }}
-          />
-          <Btn onClick={load} icon="🔍">Search</Btn>
-        </div>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-          <select value={category} onChange={e => setCategory(e.target.value)} style={{ width:160 }}>
-            <option value="">All Categories</option>
-            {CATEGORIES.map(c => <option key={c} value={c}>{CAT_META[c].icon} {c}</option>)}
-          </select>
-          <input placeholder="Min ₹" type="number" value={minPrice} onChange={e => setMinPrice(e.target.value)} style={{ width:100 }} />
-          <input placeholder="Max ₹" type="number" value={maxPrice} onChange={e => setMaxPrice(e.target.value)} style={{ width:100 }} />
-          {(search || category || minPrice || maxPrice) && (
-            <Btn variant="ghost" size="sm" onClick={() => { setSearch(""); setCategory(""); setMinPrice(""); setMaxPrice(""); setTimeout(load,0); }}>
-              Clear Filters
-            </Btn>
-          )}
+        <div className="filter-bar">
+          <div className="search-row">
+            <input
+              placeholder="Search listings…" value={search}
+              onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && load()}
+            />
+            <Btn onClick={load} icon="🔍">Search</Btn>
+          </div>
+          <div className="filter-row">
+            <select value={category} onChange={e => setCategory(e.target.value)} style={{ flex:"1 1 140px", minWidth:0 }}>
+              <option value="">All Categories</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{CAT_META[c].icon} {c}</option>)}
+            </select>
+            <div className="price-inputs">
+              <input placeholder="Min ₹" type="number" value={minPrice} onChange={e => setMinPrice(e.target.value)} />
+              <input placeholder="Max ₹" type="number" value={maxPrice} onChange={e => setMaxPrice(e.target.value)} />
+            </div>
+            {(search || category || minPrice || maxPrice) && (
+              <Btn variant="ghost" size="sm" onClick={() => { setSearch(""); setCategory(""); setMinPrice(""); setMaxPrice(""); setTimeout(load,0); }}>
+                Clear
+              </Btn>
+            )}
+          </div>
         </div>
       </div>
 
@@ -846,15 +1130,15 @@ function Marketplace({ toast }) {
 
       {!loading && products.length === 0 && (
         <div style={{ textAlign:"center", padding:60, color:"var(--muted)" }}>
-          <div style={{ fontSize:48, marginBottom:12 }}>🔍</div>
+          <div style={{ fontSize:44, marginBottom:12 }}>🔍</div>
           <div style={{ fontSize:16, fontWeight:500 }}>No listings found</div>
           <div style={{ fontSize:13, marginTop:4 }}>Try adjusting your filters</div>
         </div>
       )}
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:18 }}>
+      <div className="product-grid">
         {products.map((p, i) => (
-          <div key={p.id} style={{ animationDelay: `${i * 0.05}s` }}>
+          <div key={p.id} style={{ animationDelay: `${i * 0.04}s` }}>
             <ProductCard
               product={p}
               onChat={setChatProduct}
@@ -902,13 +1186,13 @@ function CreateListing({ onCreated, toast }) {
 
   return (
     <div style={{ maxWidth:560, margin:"0 auto" }}>
-      <div style={{ marginBottom:24 }}>
-        <h2 style={{ fontFamily:"var(--font-head)", fontSize:22, fontWeight:800 }}>New Listing</h2>
-        <p style={{ color:"var(--muted)", fontSize:14, marginTop:4 }}>Your listing will be reviewed by an admin before going live.</p>
+      <div style={{ marginBottom:20 }}>
+        <h2 style={{ fontFamily:"var(--font-head)", fontSize:20, fontWeight:800 }}>New Listing</h2>
+        <p style={{ color:"var(--muted)", fontSize:13, marginTop:4 }}>Your listing will be reviewed by an admin before going live.</p>
       </div>
       <form onSubmit={submit} style={{
         background:"var(--card)", borderRadius:18, border:"1px solid var(--border2)",
-        padding:28, display:"flex", flexDirection:"column", gap:18,
+        padding:"20px 18px", display:"flex", flexDirection:"column", gap:16,
       }}>
         <FieldGroup label="Title">
           <input placeholder="What are you selling?" value={form.title} onChange={set("title")} required />
@@ -916,7 +1200,7 @@ function CreateListing({ onCreated, toast }) {
         <FieldGroup label="Description">
           <textarea rows={4} placeholder="Describe the condition, age, etc." value={form.description} onChange={set("description")} required style={{ resize:"vertical" }} />
         </FieldGroup>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <div className="form-grid-2">
           <FieldGroup label="Category">
             <select value={form.category} onChange={set("category")}>
               {CATEGORIES.map(c => <option key={c} value={c}>{CAT_META[c].icon} {c}</option>)}
@@ -927,17 +1211,11 @@ function CreateListing({ onCreated, toast }) {
           </FieldGroup>
         </div>
         <FieldGroup label="Image (optional)">
-          <ImageUploader
-            value={form.imageUrl}
-            onChange={url => setForm(p => ({ ...p, imageUrl: url }))}
-            toast={toast}
-          />
+          <ImageUploader value={form.imageUrl} onChange={url => setForm(p => ({ ...p, imageUrl: url }))} toast={toast} />
         </FieldGroup>
-        <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-          <Btn type="submit" loading={loading} size="lg" icon={cat.icon} style={{ flex:1, justifyContent:"center" }}>
-            Submit Listing
-          </Btn>
-        </div>
+        <Btn type="submit" loading={loading} size="lg" icon={cat.icon} style={{ width:"100%", justifyContent:"center" }}>
+          Submit Listing
+        </Btn>
       </form>
     </div>
   );
@@ -962,36 +1240,21 @@ function MyListings({ toast }) {
   useEffect(() => { load(); }, [load]);
 
   async function markSold(id) {
-    try {
-      await apiFetch(`/products/${id}/status?status=SOLD`, { method:"PATCH" });
-      toast("Marked as sold!", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}/status?status=SOLD`, { method:"PATCH" }); toast("Marked as sold!", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
-
   async function archiveProduct(id) {
-    try {
-      await apiFetch(`/products/${id}/status?status=ARCHIVED`, { method:"PATCH" });
-      toast("Listing archived", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}/status?status=ARCHIVED`, { method:"PATCH" }); toast("Listing archived", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
-
   async function relistProduct(id) {
-    try {
-      await apiFetch(`/products/${id}/status?status=PENDING_REVIEW`, { method:"PATCH" });
-      toast("Listing resubmitted for review!", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}/status?status=PENDING_REVIEW`, { method:"PATCH" }); toast("Listing resubmitted!", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
-
   async function deleteProduct(id) {
     if (!confirm("Delete this listing?")) return;
-    try {
-      await apiFetch(`/products/${id}`, { method:"DELETE" });
-      toast("Deleted", "success");
-      load();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/products/${id}`, { method:"DELETE" }); toast("Deleted", "success"); load(); }
+    catch (e) { toast(e.message, "error"); }
   }
 
   const groups = {
@@ -1005,20 +1268,20 @@ function MyListings({ toast }) {
   if (loading) return <div style={{ textAlign:"center", padding:60 }}><Spinner size={32} /></div>;
   if (!products.length) return (
     <div style={{ textAlign:"center", padding:60, color:"var(--muted)" }}>
-      <div style={{ fontSize:48, marginBottom:12 }}>📦</div>
+      <div style={{ fontSize:44, marginBottom:12 }}>📦</div>
       <div style={{ fontSize:16, fontWeight:500 }}>No listings yet</div>
     </div>
   );
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:28 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:24 }}>
       {Object.entries(groups).filter(([,v]) => v.length).map(([status, items]) => (
         <div key={status}>
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
             <Badge color={STATUS_META[status]?.color}>{STATUS_META[status]?.label}</Badge>
             <span style={{ color:"var(--muted)", fontSize:13 }}>{items.length} listing{items.length > 1 ? "s" : ""}</span>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:16 }}>
+          <div className="product-grid">
             {items.map(p => (
               <ProductCard key={p.id} product={p}
                 onMarkSold={markSold} onArchive={archiveProduct} onRelist={relistProduct} onEdit={setEditProduct} onDelete={deleteProduct}
@@ -1067,33 +1330,33 @@ function Inbox({ toast }) {
   if (loading) return <div style={{ textAlign:"center", padding:60 }}><Spinner size={32} /></div>;
   if (!threads.length) return (
     <div style={{ textAlign:"center", padding:60, color:"var(--muted)" }}>
-      <div style={{ fontSize:48, marginBottom:12 }}>💬</div>
+      <div style={{ fontSize:44, marginBottom:12 }}>💬</div>
       <div style={{ fontSize:16, fontWeight:500 }}>No messages yet</div>
     </div>
   );
 
   return (
-    <div style={{ display:"flex", gap:0, background:"var(--card)", borderRadius:"var(--radius)", border:"1px solid var(--border)", overflow:"hidden", minHeight:420 }}>
-      <div style={{ width:280, borderRight:"1px solid var(--border)", overflowY:"auto" }}>
+    <div className="inbox-pane" style={{ background:"var(--card)", borderRadius:"var(--radius)", border:"1px solid var(--border)", overflow:"hidden" }}>
+      <div className="inbox-sidebar">
         {threads.map(t => (
           <div key={t.key} onClick={() => setSelected(t)} style={{
-            padding:"14px 16px", cursor:"pointer", borderBottom:"1px solid var(--border)",
+            padding:"13px 15px", cursor:"pointer", borderBottom:"1px solid var(--border)",
             background: selected?.key === t.key ? "var(--surface)" : "transparent",
             transition:"background 0.15s",
           }}>
             <div style={{ fontWeight:600, fontSize:14 }}>{t.otherName}</div>
-            <div style={{ color:"var(--accent)", fontSize:12, marginTop:1 }}>{t.productTitle}</div>
-            <div style={{ color:"var(--muted)", fontSize:12, marginTop:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+            <div style={{ color:"var(--accent)", fontSize:12, marginTop:1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.productTitle}</div>
+            <div style={{ color:"var(--muted)", fontSize:12, marginTop:3, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
               {t.lastMsg.content}
             </div>
           </div>
         ))}
       </div>
 
-      <div style={{ flex:1 }}>
+      <div className="inbox-thread">
         {selected
           ? <ThreadPane thread={selected} toast={toast} />
-          : <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"var(--muted)", fontSize:14 }}>
+          : <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", minHeight:200, color:"var(--muted)", fontSize:14 }}>
               Select a conversation
             </div>
         }
@@ -1102,12 +1365,16 @@ function Inbox({ toast }) {
   );
 }
 
+// ─── CHANGE 3: ThreadPane — added STOMP subscription + polling fallback + status dot ───
+
 function ThreadPane({ thread, toast }) {
   const user = getUser();
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [wsStatus, setWsStatus] = useState("connecting"); // "connecting" | "live" | "polling"
   const bottomRef = useRef(null);
+  const pollRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -1116,7 +1383,38 @@ function ThreadPane({ thread, toast }) {
     } catch {}
   }, [thread.key]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+
+    if (!user?.id) return;
+
+    const destination = `/topic/messages/${user.id}`;
+    const unsub = stompSubscribe(destination, (msg) => {
+      if (msg.productId === thread.productId) {
+        setMessages(prev => {
+          if (prev.find(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+        setWsStatus("live");
+      }
+    });
+
+    const check = setTimeout(() => {
+      if (!_stompReady) {
+        setWsStatus("polling");
+        pollRef.current = setInterval(load, 4000);
+      } else {
+        setWsStatus("live");
+      }
+    }, 3000);
+
+    return () => {
+      unsub();
+      clearTimeout(check);
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [load, thread.productId, user?.id]);
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages]);
 
   async function send() {
@@ -1135,17 +1433,28 @@ function ThreadPane({ thread, toast }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100%" }}>
-      <div style={{ padding:"14px 18px", borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:2 }}>
-        <div style={{ fontWeight:600 }}>{thread.otherName}</div>
-        <div style={{ color:"var(--muted)", fontSize:12 }}>{thread.productTitle}</div>
+      <div style={{ padding:"13px 16px", borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:2 }}>
+        <div style={{ fontWeight:600, fontSize:14 }}>{thread.otherName}</div>
+        <div style={{ color:"var(--muted)", fontSize:12, display:"flex", alignItems:"center", gap:6 }}>
+          {thread.productTitle}
+          {/* WS status dot */}
+          <span style={{
+            width:6, height:6, borderRadius:"50%", display:"inline-block", flexShrink:0,
+            background: wsStatus==="live" ? "var(--success)" : wsStatus==="polling" ? "var(--warn)" : "var(--muted)",
+            boxShadow: wsStatus==="live" ? "0 0 5px var(--success)" : "none",
+          }} />
+          <span style={{ fontSize:10 }}>
+            {wsStatus==="live" ? "Live" : wsStatus==="polling" ? "Polling" : "Connecting…"}
+          </span>
+        </div>
       </div>
-      <div style={{ flex:1, overflowY:"auto", padding:"14px 18px", display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", display:"flex", flexDirection:"column", gap:8, minHeight:200 }}>
         {messages.map(m => {
           const mine = m.senderId === user?.id;
           return (
             <div key={m.id} style={{ display:"flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
               <div style={{
-                maxWidth:"70%", padding:"9px 13px", borderRadius:12, fontSize:13, lineHeight:1.5,
+                maxWidth:"75%", padding:"9px 12px", borderRadius:12, fontSize:13, lineHeight:1.5,
                 background: mine ? "var(--accent)" : "var(--surface)",
                 color: mine ? "#fff" : "var(--text)",
                 borderBottomRightRadius: mine ? 4 : 12,
@@ -1161,7 +1470,7 @@ function ThreadPane({ thread, toast }) {
         })}
         <div ref={bottomRef} />
       </div>
-      <div style={{ padding:"12px 18px", borderTop:"1px solid var(--border)", display:"flex", gap:8 }}>
+      <div style={{ padding:"10px 14px", borderTop:"1px solid var(--border)", display:"flex", gap:8 }}>
         <input placeholder="Message…" value={text} onChange={e => setText(e.target.value)}
           onKeyDown={e => e.key==="Enter" && !e.shiftKey && send()} style={{ flex:1 }} />
         <Btn onClick={send} loading={sending} icon="➤">Send</Btn>
@@ -1213,10 +1522,8 @@ function AdminPanel({ toast }) {
     catch (e) { toast(e.message, "error"); }
   }
   async function banUser(id, banned) {
-    try {
-      await apiFetch(`/admin/users/${id}/${banned ? "unban" : "ban"}`, { method:"PATCH" });
-      toast(banned ? "User unbanned" : "User banned", "success"); loadAll();
-    } catch (e) { toast(e.message, "error"); }
+    try { await apiFetch(`/admin/users/${id}/${banned ? "unban" : "ban"}`, { method:"PATCH" }); toast(banned ? "User unbanned" : "User banned", "success"); loadAll(); }
+    catch (e) { toast(e.message, "error"); }
   }
   async function deleteUser(id) {
     if (!confirm("Delete this user?")) return;
@@ -1248,20 +1555,20 @@ function AdminPanel({ toast }) {
   if (loading) return <div style={{ textAlign:"center", padding:60 }}><Spinner size={32} /></div>;
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-        <h2 style={{ fontFamily:"var(--font-head)", fontSize:22, fontWeight:800 }}>Admin Panel</h2>
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <h2 style={{ fontFamily:"var(--font-head)", fontSize:20, fontWeight:800 }}>Admin Panel</h2>
         <Badge color="var(--warn)">ADMIN</Badge>
       </div>
 
-      <div style={{ display:"flex", gap:6 }}>
+      <div className="admin-tabs">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding:"8px 16px", borderRadius:8, border: tab===t.id ? "1px solid var(--accent)" : "1px solid var(--border)",
+            padding:"8px 14px", borderRadius:8, border: tab===t.id ? "1px solid var(--accent)" : "1px solid var(--border)",
             background: tab===t.id ? "rgba(91,127,255,0.12)" : "transparent",
             color: tab===t.id ? "var(--accent)" : "var(--muted)",
             fontFamily:"var(--font-body)", fontWeight:600, fontSize:13, cursor:"pointer",
-            display:"flex", alignItems:"center", gap:6,
+            display:"inline-flex", alignItems:"center", gap:6,
           }}>
             {t.label}
             {t.count > 0 && (
@@ -1276,27 +1583,29 @@ function AdminPanel({ toast }) {
       {tab === "pending" && (
         pending.length === 0
           ? <EmptyState icon="✅" msg="No pending products" />
-          : <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          : <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
               {pending.map(p => (
                 <div key={p.id} style={{
                   background:"var(--card)", borderRadius:12, border:"1px solid var(--border)",
-                  padding:"16px 20px", display:"flex", gap:16, alignItems:"flex-start",
+                  padding:"14px 16px",
                 }}>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                      <span style={{ fontWeight:700 }}>{p.title}</span>
-                      <Badge color={CAT_META[p.category]?.color}>{p.category}</Badge>
+                  <div className="pending-row">
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4, flexWrap:"wrap" }}>
+                        <span style={{ fontWeight:700 }}>{p.title}</span>
+                        <Badge color={CAT_META[p.category]?.color}>{p.category}</Badge>
+                      </div>
+                      <p style={{ color:"var(--muted)", fontSize:13 }}>{p.description}</p>
+                      <div style={{ color:"var(--muted)", fontSize:12, marginTop:5 }}>
+                        By {p.sellerName} · ₹{p.price}
+                      </div>
                     </div>
-                    <p style={{ color:"var(--muted)", fontSize:13 }}>{p.description}</p>
-                    <div style={{ color:"var(--muted)", fontSize:12, marginTop:6 }}>
-                      By {p.sellerName} · ₹{p.price} · {p.meetingHostel}
+                    <div className="pending-actions">
+                      <Btn size="sm" variant="success" onClick={() => approve(p.id)}>Approve</Btn>
+                      <Btn size="sm" variant="danger" onClick={() => { setRejectModal(p.id); setRejectReason(""); }}>Reject</Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => hideProduct(p.id)}>Hide</Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => adminDeleteProduct(p.id)}>Delete</Btn>
                     </div>
-                  </div>
-                  <div style={{ display:"flex", gap:8, flexShrink:0 }}>
-                    <Btn size="sm" variant="success" onClick={() => approve(p.id)}>Approve</Btn>
-                    <Btn size="sm" variant="danger" onClick={() => { setRejectModal(p.id); setRejectReason(""); }}>Reject</Btn>
-                    <Btn size="sm" variant="ghost" onClick={() => hideProduct(p.id)}>Hide</Btn>
-                    <Btn size="sm" variant="ghost" onClick={() => adminDeleteProduct(p.id)}>Delete</Btn>
                   </div>
                 </div>
               ))}
@@ -1310,10 +1619,10 @@ function AdminPanel({ toast }) {
               {reports.map(r => (
                 <div key={r.id} style={{
                   background:"var(--card)", borderRadius:12, border:`1px solid ${r.resolved ? "var(--border)" : "rgba(239,68,68,0.25)"}`,
-                  padding:"14px 18px", display:"flex", gap:14, alignItems:"center",
+                  padding:"12px 16px", display:"flex", gap:12, alignItems:"center", flexWrap:"wrap",
                   opacity: r.resolved ? 0.6 : 1,
                 }}>
-                  <div style={{ flex:1 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontWeight:600, fontSize:14 }}>{r.productTitle}</div>
                     <div style={{ color:"var(--muted)", fontSize:13, marginTop:2 }}>
                       <strong>{r.reporterName}</strong>: {r.reason}
@@ -1331,22 +1640,23 @@ function AdminPanel({ toast }) {
           {users.map(u => (
             <div key={u.id} style={{
               background:"var(--card)", borderRadius:12, border:"1px solid var(--border)",
-              padding:"14px 18px", display:"flex", gap:14, alignItems:"center",
-              opacity: u.banned ? 0.65 : 1,
+              padding:"12px 16px", opacity: u.banned ? 0.65 : 1,
             }}>
-              <div style={{ flex:1 }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <span style={{ fontWeight:600 }}>{u.name}</span>
-                  <Badge color={u.role === "ADMIN" ? "var(--warn)" : u.role === "SELLER" ? "var(--accent)" : "var(--muted)"}>{u.role}</Badge>
-                  {u.banned && <Badge color="var(--danger)">Banned</Badge>}
+              <div className="user-row">
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <span style={{ fontWeight:600 }}>{u.name}</span>
+                    <Badge color={u.role === "ADMIN" ? "var(--warn)" : u.role === "SELLER" ? "var(--accent)" : "var(--muted)"}>{u.role}</Badge>
+                    {u.banned && <Badge color="var(--danger)">Banned</Badge>}
+                  </div>
+                  <div style={{ color:"var(--muted)", fontSize:12, marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{u.email}</div>
                 </div>
-                <div style={{ color:"var(--muted)", fontSize:13, marginTop:2 }}>{u.email} · {u.hostelName || "—"}</div>
-              </div>
-              <div style={{ display:"flex", gap:8 }}>
-                <Btn size="sm" variant={u.banned ? "success" : "danger"} onClick={() => banUser(u.id, u.banned)}>
-                  {u.banned ? "Unban" : "Ban"}
-                </Btn>
-                <Btn size="sm" variant="ghost" onClick={() => deleteUser(u.id)}>Delete</Btn>
+                <div className="user-actions" style={{ display:"flex", gap:8, flexShrink:0 }}>
+                  <Btn size="sm" variant={u.banned ? "success" : "danger"} onClick={() => banUser(u.id, u.banned)}>
+                    {u.banned ? "Unban" : "Ban"}
+                  </Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => deleteUser(u.id)}>Del</Btn>
+                </div>
               </div>
             </div>
           ))}
@@ -1360,22 +1670,24 @@ function AdminPanel({ toast }) {
               {allProducts.map(p => (
                 <div key={p.id} style={{
                   background:"var(--card)", borderRadius:12, border:"1px solid var(--border)",
-                  padding:"14px 18px", display:"flex", gap:14, alignItems:"center",
+                  padding:"12px 16px",
                 }}>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:2 }}>
-                      <span style={{ fontWeight:600 }}>{p.title}</span>
-                      <Badge color={CAT_META[p.category]?.color}>{p.category}</Badge>
-                      <Badge color={STATUS_META[p.status]?.color}>{STATUS_META[p.status]?.label}</Badge>
+                  <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:2, flexWrap:"wrap" }}>
+                        <span style={{ fontWeight:600, fontSize:14 }}>{p.title}</span>
+                        <Badge color={CAT_META[p.category]?.color}>{p.category}</Badge>
+                        <Badge color={STATUS_META[p.status]?.color}>{STATUS_META[p.status]?.label}</Badge>
+                      </div>
+                      <div style={{ color:"var(--muted)", fontSize:12 }}>
+                        {p.sellerName} · ₹{p.price}{p.reportCount > 0 ? ` · ⚠️ ${p.reportCount} report${p.reportCount > 1 ? "s" : ""}` : ""}
+                      </div>
                     </div>
-                    <div style={{ color:"var(--muted)", fontSize:12 }}>
-                      {p.sellerName} · ₹{p.price} · {p.reportCount > 0 ? `⚠️ ${p.reportCount} report${p.reportCount > 1 ? "s" : ""}` : "No reports"}
+                    <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                      {p.status === "AVAILABLE" && <Btn size="sm" variant="ghost" onClick={() => hideProduct(p.id)}>Hide</Btn>}
+                      {p.status === "ARCHIVED"  && <Btn size="sm" variant="success" onClick={() => unhideProduct(p.id)}>Unhide</Btn>}
+                      <Btn size="sm" variant="danger" onClick={() => adminDeleteProduct(p.id)}>Del</Btn>
                     </div>
-                  </div>
-                  <div style={{ display:"flex", gap:8, flexShrink:0 }}>
-                    {p.status === "AVAILABLE" && <Btn size="sm" variant="ghost" onClick={() => hideProduct(p.id)}>Hide</Btn>}
-                    {p.status === "ARCHIVED"  && <Btn size="sm" variant="success" onClick={() => unhideProduct(p.id)}>Unhide</Btn>}
-                    <Btn size="sm" variant="danger" onClick={() => adminDeleteProduct(p.id)}>Delete</Btn>
                   </div>
                 </div>
               ))}
@@ -1385,19 +1697,15 @@ function AdminPanel({ toast }) {
       {tab === "keywords" && (
         keywords.length === 0
           ? <EmptyState icon="🔤" msg="No banned keywords configured" />
-          : <div style={{ background:"var(--card)", borderRadius:12, border:"1px solid var(--border)", padding:"18px 20px" }}>
-              <p style={{ color:"var(--muted)", fontSize:13, marginBottom:14 }}>
-                These keywords are automatically flagged in listings. Configured server-side.
-              </p>
+          : <div style={{ background:"var(--card)", borderRadius:12, border:"1px solid var(--border)", padding:"16px" }}>
+              <p style={{ color:"var(--muted)", fontSize:13, marginBottom:12 }}>These keywords are automatically flagged in listings.</p>
               <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                 {keywords.map((kw, i) => (
                   <span key={i} style={{
                     background:"rgba(239,68,68,0.1)", color:"#ef4444",
                     border:"1px solid rgba(239,68,68,0.2)",
                     padding:"4px 12px", borderRadius:99, fontSize:13, fontWeight:500,
-                  }}>
-                    🚫 {kw}
-                  </span>
+                  }}>🚫 {kw}</span>
                 ))}
               </div>
             </div>
@@ -1423,7 +1731,7 @@ function AdminPanel({ toast }) {
 function EmptyState({ icon, msg }) {
   return (
     <div style={{ textAlign:"center", padding:60, color:"var(--muted)" }}>
-      <div style={{ fontSize:42, marginBottom:12 }}>{icon}</div>
+      <div style={{ fontSize:40, marginBottom:12 }}>{icon}</div>
       <div style={{ fontSize:15 }}>{msg}</div>
     </div>
   );
@@ -1433,60 +1741,96 @@ function EmptyState({ icon, msg }) {
 
 function Nav({ tab, setTab, user, onLogout }) {
   const navItems = [
-    { id:"market",  label:"Browse",    icon:"🏪" },
+    { id:"market",     label:"Browse",      icon:"🏪" },
     ...(user?.role === "SELLER" || user?.role === "ADMIN"
       ? [{ id:"sell", label:"Sell", icon:"➕" }, { id:"mylistings", label:"My Listings", icon:"📋" }]
       : []),
-    { id:"inbox",   label:"Inbox",     icon:"💬" },
+    { id:"inbox",      label:"Inbox",       icon:"💬" },
     ...(user?.role === "ADMIN" ? [{ id:"admin", label:"Admin", icon:"⚙️" }] : []),
   ];
 
   return (
-    <nav style={{
-      position:"sticky", top:0, zIndex:100,
-      background:"rgba(8,9,12,0.85)", backdropFilter:"blur(16px)",
-      borderBottom:"1px solid var(--border)",
-      display:"flex", justifyContent:"space-between", alignItems:"center",
-      padding:"0 24px", height:58,
-    }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <div style={{
-          width:34, height:34, borderRadius:9,
-          background:"linear-gradient(135deg, var(--accent), var(--accent2))",
-          display:"flex", alignItems:"center", justifyContent:"center",
-          fontSize:17, boxShadow:"0 4px 12px rgba(91,127,255,0.3)",
-        }}>🏛️</div>
-        <span style={{ fontFamily:"var(--font-head)", fontWeight:800, fontSize:16, letterSpacing:"-0.01em" }}>ThaparMart</span>
-      </div>
+    <>
+      <nav style={{
+        position:"sticky", top:0, zIndex:100,
+        background:"rgba(8,9,12,0.9)", backdropFilter:"blur(16px)",
+        borderBottom:"1px solid var(--border)",
+        display:"flex", justifyContent:"space-between", alignItems:"center",
+        padding:"0 16px", height:"var(--nav-h)",
+      }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          <div style={{
+            width:32, height:32, borderRadius:9,
+            background:"linear-gradient(135deg, var(--accent), var(--accent2))",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:16, boxShadow:"0 4px 12px rgba(91,127,255,0.3)",
+          }}>🏛️</div>
+          <span style={{ fontFamily:"var(--font-head)", fontWeight:800, fontSize:15, letterSpacing:"-0.01em" }}>ThaparMart</span>
+        </div>
 
-      <div style={{ display:"flex", gap:2 }}>
-        {navItems.map(item => (
-          <button key={item.id} onClick={() => setTab(item.id)} style={{
-            padding:"6px 14px", borderRadius:8, border:"none",
-            background: tab===item.id ? "rgba(91,127,255,0.15)" : "transparent",
-            color: tab===item.id ? "var(--accent)" : "var(--muted)",
-            fontFamily:"var(--font-body)", fontWeight:500, fontSize:13,
-            cursor:"pointer", transition:"all 0.15s",
-            display:"flex", alignItems:"center", gap:6,
+        <div className="top-nav-links" style={{ display:"flex", gap:2 }}>
+          {navItems.map(item => (
+            <button key={item.id} onClick={() => setTab(item.id)} style={{
+              padding:"6px 12px", borderRadius:8, border:"none",
+              background: tab===item.id ? "rgba(91,127,255,0.15)" : "transparent",
+              color: tab===item.id ? "var(--accent)" : "var(--muted)",
+              fontFamily:"var(--font-body)", fontWeight:500, fontSize:13,
+              cursor:"pointer", transition:"all 0.15s",
+              display:"flex", alignItems:"center", gap:5,
+            }}>
+              <span>{item.icon}</span>{item.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          <div style={{
+            width:30, height:30, borderRadius:"50%",
+            background:"linear-gradient(135deg, var(--accent), var(--accent2))",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:13, fontWeight:700, color:"#fff",
           }}>
-            <span>{item.icon}</span>{item.label}
+            {user?.name?.[0]?.toUpperCase()}
+          </div>
+          <span className="top-nav-user-name" style={{ fontSize:13, color:"var(--muted)", maxWidth:100, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {user?.name}
+          </span>
+          <Btn variant="ghost" size="sm" onClick={onLogout}>Logout</Btn>
+        </div>
+      </nav>
+
+      <nav className="bottom-nav">
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            onClick={() => setTab(item.id)}
+            style={{
+              flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+              gap:3, border:"none", background:"transparent", padding:"6px 0",
+              color: tab===item.id ? "var(--accent)" : "var(--muted)",
+              fontSize:10, fontWeight:600, fontFamily:"var(--font-body)",
+              cursor:"pointer", transition:"color 0.15s",
+              borderTop: tab===item.id ? `2px solid var(--accent)` : "2px solid transparent",
+            }}
+          >
+            <span style={{ fontSize:20 }}>{item.icon}</span>
+            <span>{item.label}</span>
           </button>
         ))}
-      </div>
-
-      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <div style={{
-          width:32, height:32, borderRadius:"50%",
-          background:"linear-gradient(135deg, var(--accent), var(--accent2))",
-          display:"flex", alignItems:"center", justifyContent:"center",
-          fontSize:13, fontWeight:700, color:"#fff",
-        }}>
-          {user?.name?.[0]?.toUpperCase()}
-        </div>
-        <span style={{ fontSize:13, color:"var(--muted)" }}>{user?.name}</span>
-        <Btn variant="ghost" size="sm" onClick={onLogout}>Logout</Btn>
-      </div>
-    </nav>
+        <button
+          onClick={onLogout}
+          style={{
+            flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+            gap:3, border:"none", background:"transparent", padding:"6px 0",
+            color:"var(--muted)", fontSize:10, fontWeight:600, fontFamily:"var(--font-body)",
+            cursor:"pointer", borderTop:"2px solid transparent",
+          }}
+        >
+          <span style={{ fontSize:20 }}>🚪</span>
+          <span>Logout</span>
+        </button>
+      </nav>
+    </>
   );
 }
 
@@ -1500,10 +1844,20 @@ export default function App() {
   const toast = useCallback((msg, type = "info") => setToastData({ msg, type, key: Date.now() }), []);
   const user = getUser();
 
+  // ─── CHANGE 4: boot STOMP on login/reload, tear down on logout ───
+  useEffect(() => { if (auth) initStomp(); }, [auth]);
+
   function logout() {
     localStorage.removeItem("jwt");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
+    // Tear down STOMP connection cleanly
+    if (_stompClient) {
+      _stompClient.deactivate();
+      _stompClient = null;
+      _stompReady = false;
+      _stompListeners.clear();
+    }
     setAuth(false);
   }
 
@@ -1519,7 +1873,7 @@ export default function App() {
       <style>{css}</style>
       <div style={{ minHeight:"100vh", background:"var(--bg)" }}>
         <Nav tab={tab} setTab={setTab} user={user} onLogout={logout} />
-        <main style={{ padding:"28px 24px", maxWidth:1200, margin:"0 auto" }}>
+        <main className="main-content">
           {tab === "market"     && <Marketplace  toast={toast} />}
           {tab === "sell"       && <CreateListing onCreated={() => setTab("mylistings")} toast={toast} />}
           {tab === "mylistings" && <MyListings   toast={toast} />}
