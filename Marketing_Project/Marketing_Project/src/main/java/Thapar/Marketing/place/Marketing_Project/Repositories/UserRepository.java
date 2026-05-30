@@ -1,0 +1,13 @@
+package Thapar.Marketing.place.Marketing_Project.Repositories;
+
+import Thapar.Marketing.place.Marketing_Project.Entities.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+
+import java.util.Optional;
+
+public interface UserRepository extends JpaRepository<User,Long> {
+    Optional<User> findByEmail(String email);
+
+    boolean existsByEmail(String email);
+}
