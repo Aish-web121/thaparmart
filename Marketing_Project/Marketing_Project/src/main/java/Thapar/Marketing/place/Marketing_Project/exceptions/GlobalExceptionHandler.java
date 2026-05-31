@@ -20,7 +20,7 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // ── Validation errors (@NotBlank, @Email etc.)───────────────
+    // ── Validation errors (@NotBlank, @Email etc.) ───────────────
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(
             MethodArgumentNotValidException ex) {
@@ -60,7 +60,7 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
     }
 
-    // ── Database constraint violations (concurrent duplicate email etc.) ──
+    // ── Database constraint violations ───────────────────────────
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Map<String, Object>> handleDataIntegrity(
             DataIntegrityViolationException ex) {
@@ -75,16 +75,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<Map<String, Object>> handleBadCredentials(
             BadCredentialsException ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED,
-                "Bad credentials", null);
+        return buildResponse(HttpStatus.UNAUTHORIZED, "Bad credentials", null);
     }
 
-    // ── Spring Security — account banned (disabled) ──────────────
+    // ── CHANGED: DisabledException now covers unverified accounts too ──
+    // isEnabled() returns false for both banned AND unverified users.
+    // The frontend checks for "not verified" in the message to show OTP screen.
     @ExceptionHandler(DisabledException.class)
     public ResponseEntity<Map<String, Object>> handleDisabled(
             DisabledException ex) {
         return buildResponse(HttpStatus.FORBIDDEN,
-                "Your account has been banned", null);
+                "Email not verified. Please check your inbox for the verification code.", null);
     }
 
     // ── Spring Security — account locked ─────────────────────────
@@ -92,7 +93,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleLocked(
             LockedException ex) {
         return buildResponse(HttpStatus.FORBIDDEN,
-                "Your account has been banned", null);
+                "Your account has been banned.", null);
     }
 
     // ── Spring Security access denied ────────────────────────────
@@ -103,7 +104,7 @@ public class GlobalExceptionHandler {
                 "You don't have permission to perform this action", null);
     }
 
-    // ── JWT expired / invalid → 401 so frontend refresh kicks in ─
+    // ── JWT expired / invalid ────────────────────────────────────
     @ExceptionHandler(JwtException.class)
     public ResponseEntity<Map<String, Object>> handleJwtException(
             JwtException ex) {
