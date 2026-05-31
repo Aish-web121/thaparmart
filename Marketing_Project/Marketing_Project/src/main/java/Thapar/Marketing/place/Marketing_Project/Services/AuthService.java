@@ -39,7 +39,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final EmailService emailService; // NEW
 
-    // ── Register ──────────────────────────────────────────────────
+    // ── Register ─────────────────────────────────────────────────
     @Transactional
     public void register(RegisterRequest request) {
 
