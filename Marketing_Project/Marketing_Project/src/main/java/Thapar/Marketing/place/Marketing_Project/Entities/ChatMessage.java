@@ -32,7 +32,7 @@ public class ChatMessage {
 
     private boolean read;
 
-    // Instant = UTC epoch — always timezone-safe, serializes as "2025-01-15T11:00:00Z"
+    // Instant = UTC epoch — always timezone-safe, serializes as"2025-01-15T11:00:00Z"
     private Instant sentAt;
 
     @PrePersist
