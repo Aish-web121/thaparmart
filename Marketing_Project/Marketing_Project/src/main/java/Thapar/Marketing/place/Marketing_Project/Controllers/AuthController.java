@@ -16,7 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;                                                                      // NEW
+import java.util.Map;                                                                     // NEW
 
 @RestController
 @RequestMapping("/api/auth")
