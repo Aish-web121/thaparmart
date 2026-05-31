@@ -1,7 +1,7 @@
 package Thapar.Marketing.place.Marketing_Project.dtos.response;
 
 import lombok.*;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Data
 @Builder
@@ -15,5 +15,5 @@ public class ChatMessageResponse {
     private String receiverName;
     private String content;
     private boolean read;
-    private LocalDateTime sentAt;
+    private Instant sentAt;   // serializes as "2025-01-15T11:00:00Z" — always UTC
 }
