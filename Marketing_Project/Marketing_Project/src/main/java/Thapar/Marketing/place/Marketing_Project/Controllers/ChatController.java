@@ -61,6 +61,19 @@ public class ChatController {
         return ResponseEntity.ok(chatService.getInbox(myId));
     }
 
+    // GET /api/chat/unread-counts
+    // Returns a map of "productId-otherUserId" -> unread count for the current user
+    @GetMapping("/unread-counts")
+    public ResponseEntity<java.util.Map<String, Long>> getUnreadCounts(
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        Long myId = userRepository
+                .findByEmail(userDetails.getUsername())
+                .orElseThrow().getId();
+
+        return ResponseEntity.ok(chatService.getUnreadCounts(myId));
+    }
+
     // PATCH /api/chat/conversation/read?productId=1&otherUserId=2
     // Called by the receiver when they open a thread.
     // Marks all incoming unread messages as read and notifies
