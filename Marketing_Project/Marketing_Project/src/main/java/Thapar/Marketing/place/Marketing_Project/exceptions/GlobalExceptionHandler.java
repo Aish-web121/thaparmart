@@ -1,9 +1,13 @@
 package Thapar.Marketing.place.Marketing_Project.exceptions;
 
 import io.jsonwebtoken.JwtException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -54,6 +58,41 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleUserExists(
             UserAlreadyExistsException ex) {
         return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
+    }
+
+    // ── Database constraint violations (concurrent duplicate email etc.) ──
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrity(
+            DataIntegrityViolationException ex) {
+        String msg = ex.getMessage() != null
+                && ex.getMessage().toLowerCase().contains("email")
+                ? "An account with this email already exists."
+                : "A database error occurred. Please try again.";
+        return buildResponse(HttpStatus.CONFLICT, msg, null);
+    }
+
+    // ── Spring Security — bad password ───────────────────────────
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<Map<String, Object>> handleBadCredentials(
+            BadCredentialsException ex) {
+        return buildResponse(HttpStatus.UNAUTHORIZED,
+                "Bad credentials", null);
+    }
+
+    // ── Spring Security — account banned (disabled) ──────────────
+    @ExceptionHandler(DisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleDisabled(
+            DisabledException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN,
+                "Your account has been banned", null);
+    }
+
+    // ── Spring Security — account locked ─────────────────────────
+    @ExceptionHandler(LockedException.class)
+    public ResponseEntity<Map<String, Object>> handleLocked(
+            LockedException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN,
+                "Your account has been banned", null);
     }
 
     // ── Spring Security access denied ────────────────────────────
