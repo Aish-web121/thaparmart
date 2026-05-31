@@ -28,6 +28,7 @@ public class AuthService {
     private final JwtService jwtService;
 
     // ── Register ──────────────────────────────────────────────────
+    @Transactional
     public AuthResponse register(RegisterRequest request) {
 
         if (userRepository.existsByEmail(request.getEmail())) {
