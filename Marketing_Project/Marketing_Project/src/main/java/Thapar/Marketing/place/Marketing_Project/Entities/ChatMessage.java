@@ -2,7 +2,7 @@ package Thapar.Marketing.place.Marketing_Project.Entities;
 
 import jakarta.persistence.*;
 import lombok.*;
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Entity
 @Table(name = "chat_messages")
@@ -15,17 +15,14 @@ public class ChatMessage {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // the product this chat is about
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
-    // who sent the message
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sender_id", nullable = false)
     private User sender;
 
-    // who receives the message
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "receiver_id", nullable = false)
     private User receiver;
@@ -35,10 +32,11 @@ public class ChatMessage {
 
     private boolean read;
 
-    private LocalDateTime sentAt;
+    // Instant = UTC epoch — always timezone-safe, serializes as "2025-01-15T11:00:00Z"
+    private Instant sentAt;
 
     @PrePersist
     public void prePersist() {
-        sentAt = LocalDateTime.now();
+        sentAt = Instant.now();
     }
 }
