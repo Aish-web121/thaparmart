@@ -72,6 +72,7 @@ public class ChatService {
     }
 
     // ── Get inbox ─────────────────────────────────────────────────
+    // Returns only the latest message per thread.
     public List<ChatMessageResponse> getInbox(Long userId) {
         return chatMessageRepository
                 .findAllByUser(userId)
@@ -80,36 +81,36 @@ public class ChatService {
                 .collect(Collectors.toList());
     }
 
+    // ── Get unread counts per thread ──────────────────────────────
+    // Returns map of "productId-otherUserId" -> count
+    public Map<String, Long> getUnreadCounts(Long userId) {
+        List<ChatMessage> allMine = chatMessageRepository.findUnreadReceivedMessages(userId);
+        Map<String, Long> result = new HashMap<>();
+        for (ChatMessage m : allMine) {
+            String key = m.getProduct().getId() + "-" + m.getSender().getId();
+            result.merge(key, 1L, Long::sum);
+        }
+        return result;
+    }
+
     // ── Mark messages as read ─────────────────────────────────────
-    // Called when receiver opens a thread.
-    // Marks all unread messages in this conversation as read,
-    // then notifies the original sender via WebSocket so their
-    // grey ticks turn blue instantly.
+    // Single bulk UPDATE — no loading all messages into memory.
+    // Sends WebSocket receipt to sender only if something changed.
     @Transactional
     public void markAsRead(Long productId, Long readerId, Long otherUserId) {
 
-        List<ChatMessage> unread = chatMessageRepository
-                .findConversation(productId, readerId, otherUserId)
-                .stream()
-                .filter(m -> m.getReceiver().getId().equals(readerId) && !m.isRead())
-                .collect(Collectors.toList());
+        int updated = chatMessageRepository.markAllAsRead(productId, readerId, otherUserId);
 
-        if (unread.isEmpty()) return;
+        if (updated > 0) {
+            Map<String, Object> receipt = new HashMap<>();
+            receipt.put("productId", productId);
+            receipt.put("readerId", readerId);
 
-        unread.forEach(m -> m.setRead(true));
-        chatMessageRepository.saveAll(unread);
-
-        // Notify the sender that their messages have been read.
-        // Frontend listens on /topic/read/{senderId}
-        // Payload: { productId, readerId } — enough for the frontend
-        // to flip ticks blue for that conversation.
-        Map<String, Object> receipt = new HashMap<>();
-        receipt.put("productId", productId);
-        receipt.put("readerId", readerId);
-
-        messagingTemplate.convertAndSend(
-                "/topic/read/" + otherUserId, receipt
-        );
+            // Notify sender — their grey ticks turn blue
+            messagingTemplate.convertAndSend(
+                    "/topic/read/" + otherUserId, receipt
+            );
+        }
     }
 
     // ── Mapper ────────────────────────────────────────────────────
