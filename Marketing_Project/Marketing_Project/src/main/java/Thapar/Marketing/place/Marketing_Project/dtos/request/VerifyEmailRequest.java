@@ -16,3 +16,4 @@ public class VerifyEmailRequest {
     @Pattern(regexp = "\\d{6}", message = "OTP must be exactly 6 digits")
     private String otp;
 }
+//
