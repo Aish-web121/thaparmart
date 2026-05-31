@@ -21,7 +21,7 @@ public class EmailService {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-            helper.setFrom("noreply@thaparmart.in");
+            helper.setFrom("thaparmart.noreply@gmail.com");
             helper.setTo(toEmail);
             helper.setSubject("ThaparMart – Verify your email (" + otp + ")");
             helper.setText(buildHtmlEmail(otp), true);
