@@ -60,4 +60,22 @@ public class ChatController {
 
         return ResponseEntity.ok(chatService.getInbox(myId));
     }
+
+    // PATCH /api/chat/conversation/read?productId=1&otherUserId=2
+    // Called by the receiver when they open a thread.
+    // Marks all incoming unread messages as read and notifies
+    // the sender via WebSocket so blue ticks appear immediately.
+    @PatchMapping("/conversation/read")
+    public ResponseEntity<Void> markAsRead(
+            @RequestParam Long productId,
+            @RequestParam Long otherUserId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        Long myId = userRepository
+                .findByEmail(userDetails.getUsername())
+                .orElseThrow().getId();
+
+        chatService.markAsRead(productId, myId, otherUserId);
+        return ResponseEntity.noContent().build();
+    }
 }
