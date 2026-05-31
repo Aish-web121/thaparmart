@@ -12,8 +12,11 @@ import Thapar.Marketing.place.Marketing_Project.exceptions.ResourceNotFoundExcep
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -49,8 +52,7 @@ public class ChatService {
 
         ChatMessageResponse response = mapToResponse(message);
 
-        // push message to receiver in real time
-        // receiver listens on /topic/messages/{receiverId}
+        // Push new message to receiver in real time
         messagingTemplate.convertAndSend(
                 "/topic/messages/" + receiver.getId(), response
         );
@@ -76,6 +78,38 @@ public class ChatService {
                 .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    // ── Mark messages as read ─────────────────────────────────────
+    // Called when receiver opens a thread.
+    // Marks all unread messages in this conversation as read,
+    // then notifies the original sender via WebSocket so their
+    // grey ticks turn blue instantly.
+    @Transactional
+    public void markAsRead(Long productId, Long readerId, Long otherUserId) {
+
+        List<ChatMessage> unread = chatMessageRepository
+                .findConversation(productId, readerId, otherUserId)
+                .stream()
+                .filter(m -> m.getReceiver().getId().equals(readerId) && !m.isRead())
+                .collect(Collectors.toList());
+
+        if (unread.isEmpty()) return;
+
+        unread.forEach(m -> m.setRead(true));
+        chatMessageRepository.saveAll(unread);
+
+        // Notify the sender that their messages have been read.
+        // Frontend listens on /topic/read/{senderId}
+        // Payload: { productId, readerId } — enough for the frontend
+        // to flip ticks blue for that conversation.
+        Map<String, Object> receipt = new HashMap<>();
+        receipt.put("productId", productId);
+        receipt.put("readerId", readerId);
+
+        messagingTemplate.convertAndSend(
+                "/topic/read/" + otherUserId, receipt
+        );
     }
 
     // ── Mapper ────────────────────────────────────────────────────
