@@ -38,3 +38,4 @@ public class PendingRegistration {
         this.createdAt = LocalDateTime.now();
     }
 }
+//
