@@ -43,7 +43,7 @@ public class AuthService {
     @Transactional
     public void register(RegisterRequest request) {
 
-        Domain check
+        // Domain check
         if (!request.getEmail().toLowerCase().endsWith(THAPAR_DOMAIN)) {
             throw new UnauthorizedException(
                     "Only @thapar.edu email addresses are allowed to register.");
