@@ -1,33 +1,39 @@
 package Thapar.Marketing.place.Marketing_Project.Services;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.http.*;
+import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 public class EmailService {
 
-    private final JavaMailSender mailSender;
+    @Value("${brevo.api.key}")
+    private String apiKey;
 
     @Async
     public void sendVerificationOtp(String toEmail, String otp) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            RestTemplate restTemplate = new RestTemplate();
 
-            helper.setFrom("thaparmart.noreply@gmail.com");
-            helper.setTo(toEmail);
-            helper.setSubject("ThaparMart – Verify your email (" + otp + ")");
-            helper.setText(buildHtmlEmail(otp), true);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("api-key", apiKey);
 
-            mailSender.send(message);
-        } catch (MessagingException e) {
+            Map<String, Object> body = Map.of(
+                "sender", Map.of("name", "ThaparMart", "email", "thaparmart.noreply@gmail.com"),
+                "to", new Object[]{Map.of("email", toEmail)},
+                "subject", "ThaparMart – Verify your email (" + otp + ")",
+                "htmlContent", buildHtmlEmail(otp)
+            );
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            restTemplate.postForEntity("https://api.brevo.com/v3/smtp/email", request, String.class);
+
+        } catch (Exception e) {
             System.err.println("[EmailService] Failed to send OTP to " + toEmail + ": " + e.getMessage());
         }
     }
