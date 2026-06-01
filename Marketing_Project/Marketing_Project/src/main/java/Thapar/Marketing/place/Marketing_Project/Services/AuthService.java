@@ -69,24 +69,19 @@ public class AuthService {
                     "Admin accounts cannot be created via registration.");
         }
 
-         // Already pending? Just resend OTP — don't create a second pending row
-        if (pendingRepository.existsByEmail(request.getEmail())) {
-            issueAndSendOtp(request.getEmail());
-            return;
-        }
-
-        // Save to pending table only — NOT the users table
-        PendingRegistration pending = PendingRegistration.builder()
-                .email(request.getEmail())
+        User user = User.builder()
                 .name(request.getName())
+                .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
-                .role(resolvedRole.name())
+                .role(resolvedRole)
                 .college(request.getCollege())
                 .hostelName(request.getHostelName())
                 .hostelRoom(request.getHostelRoom())
+                .banned(false)
+                .emailVerified(false)
                 .build();
 
-        pendingRepository.save(pending);
+        userRepository.save(user);
         issueAndSendOtp(user.getEmail());
     }
 
