@@ -9,3 +9,4 @@ public interface PendingRegistrationRepository extends JpaRepository<PendingRegi
     void deleteByEmail(String email);
     boolean existsByEmail(String email);
 }
+//
