@@ -16,7 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;                                                                     // NEW
+import java.util.Map;                                                                   
 
 @RestController
 @RequestMapping("/api/auth")
@@ -24,6 +24,12 @@ import java.util.Map;                                                           
 public class AuthController {
 
     private final AuthService authService;
+
+//stress testing
+    @GetMapping("/loaderio-3b63abb42198be912c7b9d64d2350213")
+public ResponseEntity<String> loaderVerify() {
+    return ResponseEntity.ok("loaderio-3b63abb42198be912c7b9d64d2350213");
+}
 
     // POST /api/auth/register
     @PostMapping("/register")
