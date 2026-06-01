@@ -64,6 +64,7 @@ public class SecurityConfig {
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/loaderio-*").permitAll()             
                         .requestMatchers("/api/products").permitAll()
                         .requestMatchers("/api/products/{id}").permitAll()
                         .requestMatchers("/api/products/search").permitAll()
