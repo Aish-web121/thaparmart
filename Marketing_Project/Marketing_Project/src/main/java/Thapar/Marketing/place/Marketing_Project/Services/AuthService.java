@@ -33,11 +33,11 @@ public class AuthService {
     private static final int OTP_EXPIRY_MINUTES = 10;
 
     private final UserRepository userRepository;
-    private final EmailVerificationTokenRepository tokenRepository; // NEW
+    private final EmailVerificationTokenRepository tokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
-    private final EmailService emailService; // NEW
+    private final EmailService emailService;
 
     // ── Register ─────────────────────────────────────────────────
     @Transactional
@@ -61,7 +61,10 @@ public class AuthService {
                     "Email already registered: " + request.getEmail());
         }
 
-        if (request.getRole() == Role.ADMIN) {
+        // Fallback: if no role sent (frontend omits it), default to SELLER
+        Role resolvedRole = (request.getRole() != null) ? request.getRole() : Role.SELLER;
+
+        if (resolvedRole == Role.ADMIN) {
             throw new UnauthorizedException(
                     "Admin accounts cannot be created via registration.");
         }
@@ -70,19 +73,19 @@ public class AuthService {
                 .name(request.getName())
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
-                .role(request.getRole())
+                .role(resolvedRole)
                 .college(request.getCollege())
                 .hostelName(request.getHostelName())
                 .hostelRoom(request.getHostelRoom())
                 .banned(false)
-                .emailVerified(false) // NEW
+                .emailVerified(false)
                 .build();
 
         userRepository.save(user);
-        issueAndSendOtp(user.getEmail()); // NEW — send OTP after saving
+        issueAndSendOtp(user.getEmail());
     }
 
-    // ── Verify Email ────────────────────────────────────────────── NEW
+    // ── Verify Email ──────────────────────────────────────────────
     @Transactional
     public void verifyEmail(VerifyEmailRequest request) {
 
@@ -110,7 +113,7 @@ public class AuthService {
         userRepository.save(user);
     }
 
-    // ── Resend OTP ──────────────────────────────────────────────── NEW
+    // ── Resend OTP ────────────────────────────────────────────────
     @Transactional
     public void resendVerification(String email) {
 
